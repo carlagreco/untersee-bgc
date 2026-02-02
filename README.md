@@ -1,6 +1,4 @@
-# untersee-bgc
-
-## Overview
+# ❄️ Lake Untersee BGC mining
 
 This rep contains code used for the analysis described in:
 
@@ -8,9 +6,8 @@ This rep contains code used for the analysis described in:
 
 The workflow enables processing of long-read metagenomic data and recovery of biosynthetic gene clusters (BGCs) and metagenome-assembled genomes (MAGs).
 
----
 
-## Data Availability
+## 🧬 Data Availability
 
 The following datasets from the study are publicly available:
 
@@ -18,9 +15,8 @@ The following datasets from the study are publicly available:
 - **Metagenome assemblies**: [NCBI GenBank, accession pending]
 - **High-quality (HQ) and medium-quality (MQ) MAGs**: [NCBI GenBank, accession pending]
 
----
 
-## Running the Analysis
+## 🚀 Running the Analysis
 
 ### Requirements
 
@@ -31,7 +27,7 @@ Make sure you have the following tools installed:
 
 These are used to manage the workflow and software environments. All tools required by the analysis are handled automatically by Snakemake through conda environment yaml files specified within the workflow (in envs folder).
 
-The AntiSMASH database is also required to run this analysis. This can be downloaded here following the instructions on the [antismash website](https://docs.antismash.secondarymetabolites.org/install/)
+A database for Kraken2 is required to run this analysis and is available [here](https://benlangmead.github.io/aws-indexes/k2) - the version used in this analysis is the December 2022 PPF. The AntiSMASH database is also required to run this analysis. This can be downloaded here following the instructions on the [antismash website](https://docs.antismash.secondarymetabolites.org/install/). 
 
 ### Usage
 
@@ -42,7 +38,9 @@ The AntiSMASH database is also required to run this analysis. This can be downlo
    cd untersee-bgc
    ```
 
-2. **Run the analysis**:
+2. **Download the data from NCBI SRA**
+
+3. **Run the analysis**:
 
     ```bash
     snakemake --use-conda --cores <number_of_threads>
