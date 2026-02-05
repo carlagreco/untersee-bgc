@@ -1,0 +1,359 @@
+---
+title: "Lake Untersee ONT metagenome analysis"
+author: "Carla Greco"
+date: "2025-05-15"
+output: html_document
+---
+
+# Set up
+```{r setup }
+# Load required libraries
+library(dplyr)
+library(uwot)
+library(tidyr)
+library(ggplot2)
+library(cowplot)
+library(viridis)
+library(ggalluvial)
+library(knitr)
+library(gggenes)
+```
+
+# Taxonomy counts: kraken2
+
+```{r k2_taxonomy_counts}
+k2_data <- read.table("kraken2/LU_1kb_kraken_contigs_ncbi_tax.txt", sep = "\t")
+colnames(k2_data) <- c("contig_id", "taxid", "taxonstring")
+print(head(k2_data))
+
+k2_data$taxonstring <- factor(replace(as.character(k2_data$taxonstring), k2_data$taxonstring=="", "Unclassified"))
+col_split <- strsplit(as.character(k2_data$taxonstring), ";")
+k2_sep <- do.call(rbind, col_split)
+k2_sep <- as.data.frame(k2_sep)
+k2_df <- cbind(k2_data, k2_sep)
+
+#get unique V1
+unique_V2 <- unique(k2_df$V2)
+
+#count number of unique V2 that do not include unclassfied
+print(paste("Number of unique Phyla that do not include unclassfied:", length(unique_V2[!grepl("unclassified", unique_V2, ignore.case = TRUE)])))
+```
+
+# Region counts:
+
+```{r cluster_analysis}
+cluster_orig <- read.csv("antismash/regions_summary.csv")
+
+# Statistics
+# Convert the on_contig_edge column from character to logical
+cluster_orig$on_contig_edge_bool <- tolower(cluster_orig$on_contig_edge) == "true"
+
+# Combine all statistics into a single print statement for better markdown rendering
+cat(sprintf("Number of clusters: %d\n", nrow(cluster_orig)),
+    sprintf("Cluster length range: %d - %d\n", min(cluster_orig$length), max(cluster_orig$length)),
+    sprintf("Cluster GC content range: %.2f - %.2f\n", min(cluster_orig$gc_content), max(cluster_orig$gc_content)),
+    sprintf("Percentage on edge of contig: %.2f%%", 100 * sum(cluster_orig$on_contig_edge_bool) / nrow(cluster_orig)))
+cluster <- cluster_orig
+cluster$product <- as.factor(cluster$product)
+product_freq <- table(cluster$product)
+kable(product_freq, caption = "BGC region counts")
+
+#rename low frequency clusters for plotting purposes
+top_products <- names(sort(product_freq, decreasing = TRUE))[1:10]
+levels(cluster$product)[!levels(cluster$product) %in% top_products] <- "Other"
+cluster$product <- factor(cluster$product)
+
+```
+
+
+# Region and taxonomy counts:
+
+```{r region_taxonomy_counts}
+
+# make general dataframe
+data_join <- merge(k2_df, cluster, by = "contig_id")
+data <- data_join[c("contig_id", "product",  "V2")]
+#count number of V2 in BGC that do not include unclassfied
+BGC_unique_V2 <- unique(data$V2)
+
+#count number of unique V2 that do not include unclassfied
+print(paste("Number of unique Phyla that do not include unclassfied:", length(BGC_unique_V2[!grepl("unclassified", BGC_unique_V2, ignore.case = TRUE)])))
+
+V2_freq <- table(data$V2)
+top_V2 <- names(sort(V2_freq, decreasing = TRUE))[1:6]
+data$V2[!data$V2 %in% top_V2] <- "Other"
+
+data_summary_bgc_tax <- data %>%
+  group_by(V2) %>%
+  summarise(Frequency = n()) %>%
+  ungroup() %>%
+  mutate(Percentage = Frequency / sum(Frequency) * 100)
+
+# Calculate frequency and percentage in BGC
+data_summary_bgc_type <- data %>%
+  group_by(product, V2) %>%
+  summarise(Frequency = n()) %>%
+  ungroup() %>%
+  mutate(Percentage = Frequency / sum(Frequency) * 100)
+
+kable(data_summary_bgc_tax, caption = "BGC region counts by taxonomy")
+kable(data_summary_bgc_type, caption = "BGC region counts by type and taxonomy")
+
+```
+
+# Figure 2
+
+```{r figure_2}
+# Boxplot length with jittered points
+p_length_boxplot <- ggplot(cluster, aes(x = reorder(product, length, FUN = median), y = length)) +
+  geom_boxplot(outlier.shape = NA, color = "darkgray", fill = NA, width = 0.8, alpha = 0.5) +  # Boxplot with no fill and no outliers
+  geom_jitter(aes(fill = on_contig_edge), color = "#440154",alpha = 0.7, shape = 21, size = 2, stroke = 1, width = 0.1, height = 0) +  # Jittered points
+  scale_fill_manual(values = c("True" = "white", "False" = "#440154")) +  # Define fill colors for points
+  labs(x = "Product", y = "Length", fill = "On Contig Edge") +  # Labels
+  theme_bw() +  # Minimal theme for clean look
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position="None")
+
+# GC violin plot
+p_gc_violin <- ggplot(cluster, aes(x = reorder(product, gc_content, FUN = median), y=gc_content))+
+  geom_violin(color = "#440154", fill = "#440154", alpha = 0.5, trim = FALSE) +
+  geom_boxplot(width=0.1) +
+  labs(x = "Product", y = "GC content") +  # Labels
+  theme_bw() +  # Minimal theme for clean look
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+#Pfam counts
+pfam_counts <- read.csv("antismash/total_pfam_counts.csv")
+pfam_sorted <- pfam_counts[order(pfam_counts[, 2], decreasing = TRUE), ]
+top_pfam <- pfam_sorted[1:15, ]
+top_pfam$pfam <- factor(top_pfam$pfam, levels = top_pfam$pfam)
+
+p_pfam_bar <- ggplot(top_pfam, aes(x = pfam, y = total_count)) +
+  geom_bar(stat = "identity", color = "#21918c", fill = "#21918c") +
+  theme_bw() +  # Minimal theme for clean look
+  labs(y = "Count", x = "PFAM") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+#alluvial plot
+
+p_alluvial <- ggplot(data = data_summary_bgc_type, aes(axis1 = product, axis2 = V2, y = Frequency)) +
+  geom_alluvium(aes(fill = product), width = 0.1) +
+  geom_stratum(width = 0.1) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3) +
+  scale_x_discrete(limits = c("Cluster", "Taxonomy"), expand = c(0.05, 0.1)) +
+  scale_fill_viridis(discrete = TRUE)+
+  theme_minimal()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position="none")
+
+#final plot
+set_a <- plot_grid(p_length_boxplot, p_gc_violin, p_pfam_bar, labels = "AUTO", ncol = 1, align = "hw")
+set_b <- plot_grid(set_a, p_alluvial, labels = c("", "D"))
+ggsave("Fig_2.png", set_b, width = 8, height = 8, units = "in")
+ggsave("Fig_2.svg", set_b, width = 8, height = 8, units = "in")
+
+set_b
+
+```
+
+# Figure 3
+
+```{r figure_3C}
+# Read the BLAST output file
+blast_output <- read.table("diamond_galaxy/diamond_best_hits_filtered.tsv", header = TRUE, sep = "\t")
+#read in core additional genes file
+core_additional_genes <- read.table("antismash/region_core_additional_gene_list.tsv", header = TRUE, sep = "\t")
+
+#merge the two files
+merged_df <- merge(blast_output, core_additional_genes, by.x = "qseqid", by.y = "gene_id", all.y = TRUE)
+
+# Thresholds
+thresholds <- c(80, 70, 60, 50, 40)
+total_genes <- nrow(merged_df)
+
+#counts below each threshold in for pident
+counts_below_threshold <- data.frame(
+  Threshold = paste0("≤", thresholds),
+  Count = sapply(thresholds, function(t) sum(merged_df$pident <= t, na.rm = TRUE)),
+  Percent = sapply(thresholds, function(t) {
+    sprintf("%.2f%%", 100 * sum(merged_df$pident <= t, na.rm = TRUE) / total_genes)
+  })
+)
+kable(counts_below_threshold, caption = "Counts below thresholds")
+
+# Count matches per category and threshold
+results <- lapply(thresholds, function(t) {
+  merged_df %>%
+    group_by(cluster_category) %>%
+    summarise(
+      Count = sum(!is.na(pident) & pident <= t),
+      Total = n(),
+      Percent = sprintf("%.2f%%", 100 * Count / Total),
+      .groups = "drop"
+    ) %>%
+    mutate(Threshold = paste0("≤", t))
+}) %>%
+  bind_rows()
+
+# Pivot to wide tables
+count_table <- results %>% select(cluster_category, Threshold, Count) %>%
+  pivot_wider(names_from = Threshold, values_from = Count)
+
+percent_table <- results %>% select(cluster_category, Threshold, Percent) %>%
+  pivot_wider(names_from = Threshold, values_from = Percent)
+
+kable(count_table, caption = "Counts below thresholds")
+kable(percent_table, caption = "Percentages below thresholds")
+
+#Get 'other' cluster category for not top 10 for plotting purposes
+merged_df$cluster_category_other <- ifelse(merged_df$cluster_category %in% names(sort(table(merged_df$cluster_category), decreasing = TRUE))[1:10], 
+                                     merged_df$cluster_category, "other")
+merged_df$cluster_category_other <- factor(merged_df$cluster_category_other)
+
+#violin plot of pident by cluster category
+pident_violin <- ggplot(merged_df, aes(x = pident, y = cluster_category_other)) +
+  geom_violin(trim = FALSE, fill = "lightgrey", alpha = 0.5) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, fill = "#3b528b", alpha = 0.5) +
+  #geom_jitter(width = 0.2, alpha = 0.3, color = "#3b528b" ) +
+  theme_bw(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.title = element_text(size = 8)) +
+  labs(x = "pident",
+       y = "Frequency")
+```
+```{r figure_3AB}
+biosynthetic_genes <- read.table("antismash/region_core_additional_gene_list.tsv", header = TRUE, sep = "\t")
+#show rows with empty string "" in cluster_category
+biosynthetic_genes[biosynthetic_genes$cluster_category == "", ]
+#remove rows with empty string "" in cluster_category
+biosynthetic_genes <- biosynthetic_genes[biosynthetic_genes$cluster_category != "", ]
+
+biosynthetic_genes <- separate_rows(biosynthetic_genes, pfam_domains, sep=";")
+#count biosynthetic per protocluster category
+biosynthetic_genes_count <- biosynthetic_genes %>%
+  count(cluster_category, gene_kind)
+#rename low frequency clusters for plotting purposes
+
+biosynthetic_pfam_count <- biosynthetic_genes %>%
+  group_by(cluster_category, gene_kind) %>%
+  summarise(distinct_pfams = n_distinct(pfam_domains))
+#rename low frequency clusters for plotting purposes
+
+#ggplot for only biosynthetic genes
+bar_pfam_core <- ggplot(biosynthetic_pfam_count[biosynthetic_pfam_count$gene_kind == "biosynthetic", ],
+                        aes(x = cluster_category, y = distinct_pfams)) +
+  geom_bar(stat = "identity", color = "#440154", fill = "#440154", alpha = 0.7) +
+  theme_bw(base_size = 10) +  # Minimal theme for clean look
+  labs(x = "Product", y = "Unique PFAMs") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.title = element_text(size = 8))
+
+bar_pfam_add <- ggplot(biosynthetic_pfam_count[biosynthetic_pfam_count$gene_kind == "biosynthetic-additional", ], 
+                       aes(x = cluster_category, y = distinct_pfams)) +
+  geom_bar(stat = "identity", color = "#3b528b", fill = "#3b528b", alpha = 0.7) +
+  theme_bw(base_size = 10) +  # Minimal theme for clean look
+  labs(x = "Product", y = "Unique PFAMs") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.title = element_text(size = 8))
+```
+```{r figure_3D}
+#clustalo command clustalo -i PF00494_LU_pf_combined.faa --distmat-out=PF00494_LU_pf_combined.faa.clustal_dist.txt -o PF00494_LU_pf_combined.faa.clustal_msa.fasta --full --percent-id
+
+clustalo_file <- "antismash/PF00494_analysis/PF00494_LU_pf_combined.faa.clustal_dist.txt" # nolint
+
+dist_df <- read.table(clustalo_file, skip = 1, row.names = 1)
+
+# Convert to matrix
+dist_matrix <- as.matrix(dist_df)
+dist_matrix <- 1 - (dist_matrix / 100)
+
+# Extract sequence names
+seq_names <- rownames(dist_matrix)
+# Assign colors:
+# If sequence name starts with "contig_", use #440154; else use #21918c
+colors <- ifelse(grepl("^contig_", seq_names), "#440154", "#21918c")
+
+# --- MDS ---
+mds_coords <- cmdscale(as.dist(dist_matrix), k = 2)
+mds_df <- data.frame(
+  X = mds_coords[,1],
+  Y = mds_coords[,2],
+  Label = seq_names
+)
+
+# Split the data based on sequence names
+mds_df_ref <- mds_df[!grepl("^contig_", mds_df$Label), ]
+mds_df_contig <- mds_df[grepl("^contig_", mds_df$Label), ]
+
+plot_mds <- ggplot() +
+  # First layer: reference points
+  geom_point(data = mds_df_ref, aes(x = X, y = Y, color = "Reference"), 
+             size = 1, alpha = 0.5) +
+  # Second layer: contig points (drawn last)
+  geom_point(data = mds_df_contig, aes(x = X, y = Y, color = "Untersee"), 
+             size = 1, alpha = 0.5) +
+  # Use manual colors with a legend
+  scale_color_manual(values = c("Reference" = "#21918c", "Untersee" = "#440154")) +
+  theme_bw(base_size = 10) +
+  theme(axis.title = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8)) +
+  labs(x = "Dimension 1",
+       y = "Dimension 2",
+       color = "Sequence Type")
+
+f3 <- plot_grid(bar_pfam_core, bar_pfam_add, pident_violin, plot_mds, ncol = 2, labels = c("A", "B", "C", "D"))
+ggsave("Fig_3.png", f3, width = 8, height = 6, units = "in")
+ggsave("Fig_3.svg", f3, width = 8, height = 6, units = "in")
+
+f3
+```
+
+# Figure 4
+```{r figure_4}
+# Function to load and process BED files
+process_bed <- function(file_path) {
+  bed_data <- read.table(file_path, header = FALSE, stringsAsFactors = FALSE, sep = "\t")
+  colnames(bed_data) <- c("chrom", "start", "end", "gene", "score", "strand", "annotation", "type")
+  bed_data$strand <- ifelse(bed_data$strand == "+", 1, -1)
+  return(bed_data)
+}
+
+# Load BED files
+bed_files <- c("antismash/gene_arrow_files/contig_17880.region001.bed",
+               "antismash/gene_arrow_files/contig_7808.region001.bed",
+               "antismash/gene_arrow_files/contig_8681.region001.bed")
+
+bed_data_list <- lapply(bed_files, process_bed)
+bed_data <- do.call(rbind, bed_data_list)
+
+# Set colors for the plot
+bed_data$type <- factor(bed_data$type)  # Convert 'type' to a factor for easier control of colors
+unique_types <- levels(bed_data$type)
+
+# Assign colors, with "Unknown" as light gray
+type_colors <- viridis(length(unique_types) - 1, option = "D")  # Viridis palette
+names(type_colors) <- unique_types[unique_types != "Unknown"]
+type_colors <- c(type_colors, Unknown = "lightgray")  # Add "Unknown" as light gray
+
+# Plot the gene arrow diagram
+gene_plot <- ggplot(bed_data, aes(xmin = start, xmax = end, y = chrom, fill = type, forward = strand)) +
+  geom_gene_arrow() +
+  facet_wrap(~ chrom, scales = "free", ncol = 1) +
+  scale_fill_manual(
+    values = type_colors,
+    breaks = names(type_colors)[names(type_colors) != "Unknown"]  # Exclude "Unknown" from the legend
+  ) +
+  theme_genes() +
+  labs(
+    x = "Genomic Position",
+    y = "BGC",
+    fill = "Gene Type"
+  ) +
+  theme(
+    #make all of legend smaller
+    legend.text = element_text(size = 8),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.position = "right"
+  )
+
+ggsave("Fig_4.png", gene_plot, width = 6, height = 4, units = "in")
+ggsave("Fig_4.svg", gene_plot, width = 6, height = 4, units = "in")
+
+gene_plot
+```
