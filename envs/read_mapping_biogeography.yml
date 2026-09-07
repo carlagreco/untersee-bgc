@@ -1,0 +1,11 @@
+name: read_mapping_biogeography
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - minimap2
+  - samtools
+  - sra-tools
+  - curl
